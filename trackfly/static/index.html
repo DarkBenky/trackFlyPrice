@@ -1,0 +1,548 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>trackFlyPrice</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1216;
+    --panel: #161b22;
+    --panel-2: #1b222c;
+    --border: #232b36;
+    --text: #e6edf3;
+    --muted: #8b97a8;
+    --accent: #4f9cf9;
+    --good: #3fb950;
+    --warn: #d29922;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Ubuntu, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 28px 20px 60px; }
+  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px 16px; margin-bottom: 22px; }
+  h1 { font-size: 20px; margin: 0; letter-spacing: .2px; }
+  h1 span { color: var(--accent); }
+  h2 { font-size: 15px; margin: 0; font-weight: 600; }
+  .route { font-size: 15px; color: var(--text); font-weight: 600; }
+  .meta { color: var(--muted); font-size: 13px; margin-left: auto; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .card {
+    background: linear-gradient(180deg, var(--panel-2), var(--panel));
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 16px;
+    min-height: 96px;
+  }
+  .card .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; }
+  .card .value { font-size: 26px; font-weight: 650; margin-top: 6px; font-variant-numeric: tabular-nums; }
+  .card .value.good { color: var(--good); }
+  .card .sub { color: var(--muted); font-size: 12.5px; margin-top: 4px; }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+  .panel-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+  .panel-head > :last-child { margin-left: auto; }
+  .hint { color: var(--muted); font-size: 12.5px; }
+  .chart-box { position: relative; height: 300px; }
+  select {
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 6px 9px;
+    font-size: 13px;
+    max-width: 260px;
+  }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }
+  tbody tr:last-child td { border-bottom: none; }
+  td.num { font-variant-numeric: tabular-nums; }
+  td.best { color: var(--good); font-weight: 600; }
+  tr.current td { background: rgba(79, 156, 249, .07); }
+  th[data-sort] { cursor: pointer; user-select: none; }
+  th[data-sort]:hover { color: var(--text); }
+  th .arrow { display: inline-block; width: 10px; font-size: 10px; opacity: .35; }
+  th.sorted { color: var(--text); }
+  th.sorted .arrow { opacity: 1; color: var(--accent); }
+  .filters { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-left: auto; }
+  .filters label { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+  .filters select { padding: 4px 7px; font-size: 12.5px; max-width: 170px; }
+  button.ghost {
+    background: var(--panel-2); color: var(--muted); border: 1px solid var(--border);
+    border-radius: 8px; padding: 5px 10px; font-size: 12.5px; cursor: pointer;
+  }
+  button.ghost:hover { color: var(--text); border-color: var(--accent); }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  ul.alerts { list-style: none; margin: 12px 0 0; padding: 0; }
+  ul.alerts li { padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13.5px; display: flex; gap: 12px; flex-wrap: wrap; }
+  ul.alerts li:last-child { border-bottom: none; }
+  ul.alerts time { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .pill { border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px; font-size: 11.5px; color: var(--muted); }
+  .pill.ok { color: var(--good); border-color: rgba(63, 185, 80, .35); }
+  .pill.bad { color: var(--warn); border-color: rgba(210, 153, 34, .35); }
+  footer { color: var(--muted); font-size: 12px; margin-top: 26px; line-height: 1.7; }
+  .empty { color: var(--muted); font-size: 13.5px; padding: 8px 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>track<span>Fly</span>Price</h1>
+    <div class="route" id="route">loading…</div>
+    <div class="meta" id="meta"></div>
+  </header>
+
+  <section class="cards">
+    <div class="card">
+      <div class="label">Current lowest</div>
+      <div class="value" id="curLow">–</div>
+      <div class="sub" id="curLowSub">cheapest date pair of the latest poll</div>
+    </div>
+    <div class="card">
+      <div class="label">All-time low</div>
+      <div class="value good" id="allLow">–</div>
+      <div class="sub" id="allLowSub">since tracking started</div>
+    </div>
+    <div class="card">
+      <div class="label">Date pairs</div>
+      <div class="value" id="pairCount">–</div>
+      <div class="sub" id="pairSub">in the search window</div>
+    </div>
+    <div class="card">
+      <div class="label">Polls / alerts</div>
+      <div class="value" id="counters">–</div>
+      <div class="sub" id="lastRun">no poll yet</div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Price history</h2>
+      <select id="pairSelect" title="Choose a date pair"></select>
+    </div>
+    <div class="chart-box"><canvas id="chart"></canvas></div>
+    <div class="hint" id="chartHint" style="margin-top:8px"></div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Date pairs</h2>
+      <div class="filters">
+        <label>Stops
+          <select id="stopsFilter">
+            <option value="any">any</option>
+            <option value="0">nonstop</option>
+            <option value="1">up to 1</option>
+            <option value="2">up to 2</option>
+          </select>
+        </label>
+        <label>Airline
+          <select id="airlineFilter"><option value="any">any</option></select>
+        </label>
+        <button id="resetFilters" class="ghost" type="button">reset</button>
+        <span class="hint" id="pairsHint"></span>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th data-sort="depart">Departure <span class="arrow"></span></th>
+            <th data-sort="return">Return <span class="arrow"></span></th>
+            <th data-sort="latest">Latest <span class="arrow"></span></th>
+            <th data-sort="best">All-time low <span class="arrow"></span></th>
+            <th data-sort="checks">Checks <span class="arrow"></span></th>
+            <th data-sort="duration">Flight <span class="arrow"></span></th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="pairsBody">
+          <tr><td colspan="7" class="empty">waiting for data…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>Recent alerts</h2></div>
+    <ul class="alerts" id="alerts"><li class="empty">no alerts yet</li></ul>
+  </section>
+
+  <footer>
+    Prices are round-trip totals for one adult, scraped from Google Flights.
+    Page refreshes every 60 s. Data: <span id="dbInfo">–</span>
+  </footer>
+</div>
+
+<script>
+(() => {
+  const state = { currency: "EUR", points: [], summary: null, selected: "" };
+
+  const el = (id) => document.getElementById(id);
+
+  const fmtMoney = (value) => {
+    if (value === null || value === undefined) return "–";
+    try {
+      return new Intl.NumberFormat(undefined, {
+        style: "currency", currency: state.currency, maximumFractionDigits: 0,
+      }).format(value);
+    } catch (_) {
+      return `${state.currency} ${Math.round(value)}`;
+    }
+  };
+
+  const fmtDate = (iso) => {
+    if (!iso) return "–";
+    const [y, m, d] = iso.split("-").map(Number);
+    return new Date(y, m - 1, d).toLocaleDateString(undefined, {
+      day: "2-digit", month: "short", year: "numeric",
+    });
+  };
+
+  const fmtDateTime = (iso) => {
+    if (!iso) return "–";
+    return new Date(iso).toLocaleString(undefined, {
+      day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit",
+    });
+  };
+
+  const fmtDuration = (min) => {
+    if (!min) return "";
+    const h = Math.floor(min / 60), m = min % 60;
+    return h ? `${h}h${String(m).padStart(2, "0")}` : `${m}m`;
+  };
+
+  const chart = new Chart(el("chart"), {
+    type: "line",
+    data: {
+      datasets: [{
+        label: "Cheapest",
+        data: [],
+        borderColor: "#4f9cf9",
+        backgroundColor: "rgba(79,156,249,.14)",
+        borderWidth: 2,
+        fill: true,
+        tension: .25,
+        pointRadius: 3,
+        pointHoverRadius: 6,
+        pointBackgroundColor: "#4f9cf9",
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: "nearest", intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            title: (items) => new Date(items[0].parsed.x).toLocaleString(),
+            label: (item) => fmtMoney(item.parsed.y),
+          },
+        },
+      },
+      scales: {
+        x: {
+          type: "linear",
+          grid: { color: "rgba(255,255,255,.05)" },
+          ticks: {
+            color: "#8b97a8",
+            maxTicksLimit: 8,
+            callback: function (value) {
+              const scale = this.chart.scales.x;
+              const span = (scale.max || 0) - (scale.min || 0);
+              const date = new Date(value);
+              // Short ranges would otherwise repeat the same day label.
+              if (span < 2 * 86400000) {
+                return date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+              }
+              return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+            },
+          },
+        },
+        y: {
+          grid: { color: "rgba(255,255,255,.05)" },
+          ticks: { color: "#8b97a8", callback: (v) => fmtMoney(v) },
+        },
+      },
+    },
+  });
+
+  function renderSummary(s) {
+    state.summary = s;
+    state.currency = (s.route && s.route.currency) || "EUR";
+    document.title = `${s.route.origin} → ${s.route.destination} · trackFlyPrice`;
+    el("route").textContent = `${s.route.origin} → ${s.route.destination}`;
+
+    const last = s.last_run;
+    el("meta").textContent = last
+      ? `last poll ${last.finished_at ? fmtDateTime(last.finished_at) : "running now…"}`
+      : "no poll yet";
+    el("lastRun").textContent = !last
+      ? "no poll yet"
+      : last.finished_at
+        ? `${last.ok} ok${last.errors ? `, ${last.errors} error` : ""} · ${fmtDateTime(last.finished_at)}`
+        : "polling now…";
+
+    const cur = s.current_lowest;
+    el("curLow").textContent = cur ? fmtMoney(cur.latest) : "–";
+    el("curLowSub").textContent = cur
+      ? `${fmtDate(cur.depart)} → ${fmtDate(cur.return)}`
+      : "no data yet";
+
+    const best = s.all_time_low;
+    el("allLow").textContent = best ? fmtMoney(best.price) : "–";
+    el("allLowSub").textContent = best
+      ? `${fmtDate(best.depart)} → ${fmtDate(best.return)}`
+      : "since tracking started";
+
+    el("pairCount").textContent = s.pairs.length;
+    el("pairSub").textContent = s.counters
+      ? `${s.counters.runs} polls · ${s.counters.quotes} observations`
+      : "in the search window";
+
+    el("counters").textContent = s.counters
+      ? `${s.counters.runs} / ${s.counters.alerts}`
+      : "–";
+
+    el("pairsHint").textContent = cur
+      ? `cheapest now: ${fmtDate(cur.depart)} → ${fmtDate(cur.return)}`
+      : "";
+
+    applyView();
+    renderAlerts(s.recent_alerts);
+    renderPairSelect(s.pairs);
+  }
+
+  const view = { sortKey: "latest", sortDir: 1, stops: "any", airline: "any" };
+
+  const airlineList = (pair) =>
+    (pair.airlines || "").split(",").map((name) => name.trim()).filter(Boolean);
+
+  function sortValue(pair, key) {
+    switch (key) {
+      case "depart": return pair.depart;
+      case "return": return pair["return"];
+      case "best": return pair.best;
+      case "checks": return pair.checks;
+      case "duration": return pair.duration_min || 1e9;
+      default: return pair.latest;
+    }
+  }
+
+  function applyView() {
+    const all = (state.summary && state.summary.pairs) || [];
+    const current = state.summary && state.summary.current_lowest;
+    let rows = all.slice();
+
+    if (view.stops !== "any") {
+      const maxStops = Number(view.stops);
+      rows = rows.filter((p) => p.stops !== null && p.stops !== undefined && p.stops <= maxStops);
+    }
+    if (view.airline !== "any") {
+      rows = rows.filter((p) => airlineList(p).includes(view.airline));
+    }
+
+    rows.sort((a, b) => {
+      const left = sortValue(a, view.sortKey);
+      const right = sortValue(b, view.sortKey);
+      if (left < right) return -view.sortDir;
+      if (left > right) return view.sortDir;
+      return a.depart.localeCompare(b.depart) || a["return"].localeCompare(b["return"]);
+    });
+
+    renderPairs(rows, current, all.length);
+    updateSortHeaders();
+    populateAirlines(all);
+  }
+
+  function updateSortHeaders() {
+    document.querySelectorAll("th[data-sort]").forEach((th) => {
+      const active = th.dataset.sort === view.sortKey;
+      th.classList.toggle("sorted", active);
+      const arrow = th.querySelector(".arrow");
+      if (arrow) arrow.textContent = active ? (view.sortDir > 0 ? "▲" : "▼") : "";
+    });
+  }
+
+  function populateAirlines(pairs) {
+    const select = el("airlineFilter");
+    const names = new Set();
+    for (const pair of pairs) for (const name of airlineList(pair)) names.add(name);
+    const signature = [...names].sort().join("|");
+    if (select.dataset.signature === signature) return;
+
+    const previous = select.value;
+    select.innerHTML = '<option value="any">any</option>';
+    for (const name of [...names].sort()) {
+      const option = document.createElement("option");
+      option.value = name;
+      option.textContent = name;
+      select.appendChild(option);
+    }
+    select.dataset.signature = signature;
+    if (names.has(previous)) {
+      select.value = previous;
+    } else {
+      select.value = "any";
+      view.airline = "any";
+    }
+  }
+
+  function renderPairs(rows, current, total) {
+    const body = el("pairsBody");
+    const hint = el("pairsHint");
+
+    if (!rows.length) {
+      body.innerHTML = `<tr><td colspan="7" class="empty">${
+        total ? "no date pair matches these filters" : "waiting for data…"
+      }</td></tr>`;
+      hint.textContent = total ? `0 of ${total} pairs` : "";
+      return;
+    }
+
+    hint.textContent = `${rows.length} of ${total} pairs`;
+    body.innerHTML = "";
+    for (const p of rows) {
+      const tr = document.createElement("tr");
+      if (current && p.depart === current.depart && p["return"] === current["return"]) {
+        tr.className = "current";
+      }
+      const flight = [p.airlines, p.stops === 0 ? "nonstop" : (p.stops ? `${p.stops} stop${p.stops > 1 ? "s" : ""}` : ""), fmtDuration(p.duration_min)]
+        .filter(Boolean).join(" · ");
+
+      tr.innerHTML = `
+        <td>${fmtDate(p.depart)}</td>
+        <td>${fmtDate(p["return"])}</td>
+        <td class="num">${fmtMoney(p.latest)}</td>
+        <td class="num best">${fmtMoney(p.best)}</td>
+        <td class="num">${p.checks}</td>
+        <td>${flight || "–"}</td>
+        <td>${p.url ? `<a href="${p.url}" target="_blank" rel="noopener">open ↗</a>` : ""}</td>
+      `;
+      body.appendChild(tr);
+    }
+  }
+
+  function renderAlerts(alerts) {
+    const list = el("alerts");
+    if (!alerts || !alerts.length) {
+      list.innerHTML = '<li class="empty">no alerts yet</li>';
+      return;
+    }
+    list.innerHTML = "";
+    for (const a of alerts) {
+      const li = document.createElement("li");
+      const ok = (a.channels || "").includes("ok");
+      li.innerHTML = `
+        <time>${fmtDateTime(a.ts)}</time>
+        <strong>${fmtMoney(a.price)}</strong>
+        <span>${fmtDate(a.depart)} → ${fmtDate(a["return"])}</span>
+        <span class="pill ${ok ? "ok" : "bad"}">${a.channels || "log"}</span>
+      `;
+      list.appendChild(li);
+    }
+  }
+
+  function renderPairSelect(pairs) {
+    const select = el("pairSelect");
+    if (select.dataset.ready === "1" && select.options.length === pairs.length + 1) return;
+    const previous = select.value;
+    select.innerHTML = '<option value="">Whole window (cheapest per poll)</option>';
+    for (const p of pairs) {
+      const option = document.createElement("option");
+      option.value = `${p.depart}|${p["return"]}`;
+      option.textContent = `${fmtDate(p.depart)} → ${fmtDate(p["return"])}`;
+      select.appendChild(option);
+    }
+    select.dataset.ready = "1";
+    select.value = previous;
+  }
+
+  async function loadSeries() {
+    const select = el("pairSelect");
+    const [depart, ret] = (select.value || "").split("|");
+    const params = new URLSearchParams({ days: "180" });
+    if (depart && ret) { params.set("depart", depart); params.set("return", ret); }
+
+    const response = await fetch(`/api/series?${params}`);
+    if (!response.ok) throw new Error(`series HTTP ${response.status}`);
+    const payload = await response.json();
+
+    chart.data.datasets[0].data = payload.points.map((p) => ({ x: Date.parse(p.ts), y: p.price }));
+    chart.update("none");
+
+    const hint = el("chartHint");
+    if (!payload.points.length) {
+      hint.textContent = "No observations yet for this selection.";
+    } else {
+      const values = payload.points.map((p) => p.price);
+      hint.textContent = `${payload.points.length} polls · low ${fmtMoney(Math.min(...values))} · high ${fmtMoney(Math.max(...values))}`;
+    }
+  }
+
+  async function refresh() {
+    try {
+      const response = await fetch("/api/summary");
+      if (!response.ok) throw new Error(`summary HTTP ${response.status}`);
+      renderSummary(await response.json());
+      await loadSeries();
+    } catch (error) {
+      el("meta").textContent = `connection lost: ${error.message}`;
+    }
+  }
+
+  el("pairSelect").addEventListener("change", loadSeries);
+  el("stopsFilter").addEventListener("change", (event) => {
+    view.stops = event.target.value;
+    applyView();
+  });
+  el("airlineFilter").addEventListener("change", (event) => {
+    view.airline = event.target.value;
+    applyView();
+  });
+  el("resetFilters").addEventListener("click", () => {
+    view.stops = "any";
+    view.airline = "any";
+    view.sortKey = "latest";
+    view.sortDir = 1;
+    el("stopsFilter").value = "any";
+    el("airlineFilter").value = "any";
+    applyView();
+  });
+  document.querySelectorAll("th[data-sort]").forEach((th) => {
+    th.addEventListener("click", () => {
+      const key = th.dataset.sort;
+      if (view.sortKey === key) {
+        view.sortDir = -view.sortDir;
+      } else {
+        view.sortKey = key;
+        view.sortDir = 1;
+      }
+      applyView();
+    });
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) refresh();
+  });
+
+  refresh();
+  setInterval(() => { if (!document.hidden) refresh(); }, 60000);
+})();
+</script>
+</body>
+</html>

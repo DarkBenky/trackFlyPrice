@@ -1,0 +1,5 @@
+fast-flights>=3.1.0,<4
+primp>=0.15
+selectolax>=0.3
+# fast-flights imports typing_extensions without declaring it on all Pythons
+typing-extensions>=4.12
