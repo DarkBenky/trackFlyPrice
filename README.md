@@ -1,3 +1,5 @@
+# NOTE: LLM slop i dont care about this this is just one time project
+
 # trackFlyPrice
 
 Watches round-trip flight prices for one route across a range of departure /
