@@ -194,6 +194,10 @@
 
   const el = (id) => document.getElementById(id);
 
+  // scraped values end up in innerHTML - never trust them
+  const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+
   const fmtMoney = (value) => {
     if (value === null || value === undefined) return "–";
     try {
@@ -430,9 +434,9 @@
         <td>${fmtDate(p["return"])}</td>
         <td class="num">${fmtMoney(p.latest)}</td>
         <td class="num best">${fmtMoney(p.best)}</td>
-        <td class="num">${p.checks}</td>
-        <td>${flight || "–"}</td>
-        <td>${p.url ? `<a href="${p.url}" target="_blank" rel="noopener">open ↗</a>` : ""}</td>
+        <td class="num">${Number(p.checks) || 0}</td>
+        <td>${esc(flight) || "–"}</td>
+        <td>${p.url ? `<a href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">open ↗</a>` : ""}</td>
       `;
       body.appendChild(tr);
     }
@@ -452,7 +456,7 @@
         <time>${fmtDateTime(a.ts)}</time>
         <strong>${fmtMoney(a.price)}</strong>
         <span>${fmtDate(a.depart)} → ${fmtDate(a["return"])}</span>
-        <span class="pill ${ok ? "ok" : "bad"}">${a.channels || "log"}</span>
+        <span class="pill ${ok ? "ok" : "bad"}">${esc(a.channels || "log")}</span>
       `;
       list.appendChild(li);
     }

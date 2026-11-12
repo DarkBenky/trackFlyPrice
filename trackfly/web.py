@@ -10,6 +10,7 @@ import base64
 import hmac
 import json
 import logging
+import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -22,6 +23,55 @@ log = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
+IDLE_TIMEOUT_SEC = 15
+MAX_WORKERS = 32
+MAX_DAYS = 3650
+
+SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "Content-Security-Policy": (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'"
+    ),
+}
+
+
+class BoundedThreadingHTTPServer(ThreadingHTTPServer):
+    """Threading server with a hard cap on concurrent connections."""
+
+    daemon_threads = True
+    request_queue_size = 64
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._slots = threading.BoundedSemaphore(MAX_WORKERS)
+
+    def process_request(self, request, client_address) -> None:
+        if not self._slots.acquire(blocking=False):
+            try:
+                request.sendall(
+                    b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                )
+            except OSError:
+                pass
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            self._slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address) -> None:
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._slots.release()
+
 
 def make_handler(cfg: Config):
     expected_auth = ""
@@ -32,6 +82,10 @@ def make_handler(cfg: Config):
     class Handler(BaseHTTPRequestHandler):
         server_version = "trackFlyPrice"
         protocol_version = "HTTP/1.1"
+        timeout = IDLE_TIMEOUT_SEC  # drops idle/slow clients (slowloris)
+
+        def version_string(self) -> str:
+            return self.server_version  # keep the Python version private
 
         # -- helpers -------------------------------------------------------
 
@@ -55,8 +109,11 @@ def make_handler(cfg: Config):
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
+            for name, value in SECURITY_HEADERS.items():
+                self.send_header(name, value)
             self.end_headers()
-            self.wfile.write(body)
+            if body:
+                self.wfile.write(body)
 
         def _json(self, payload: dict, status: int = 200) -> None:
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -92,10 +149,13 @@ def make_handler(cfg: Config):
                     self._api_series(query)
                 else:
                     self._json({"error": "not found"}, 404)
-            except Exception as exc:  # noqa: BLE001 - never kill the server
-                log.exception("request failed: %s", self.path)
+            except ValueError as exc:
+                log.warning("bad request on %s: %s", self.path[:200], exc)
+                self._json({"error": "bad request"}, 400)
+            except Exception:  # noqa: BLE001 - never kill the server
+                log.exception("request failed: %s", self.path[:200])
                 try:
-                    self._json({"error": str(exc)}, 500)
+                    self._json({"error": "internal error"}, 500)
                 except OSError:
                     pass
 
@@ -110,11 +170,12 @@ def make_handler(cfg: Config):
 
         def _api_series(self, query: dict[str, list[str]]) -> None:
             try:
-                days = int(query.get("days", ["90"])[0])
-            except ValueError:
+                days = max(1, min(int(query.get("days", ["90"])[0]), MAX_DAYS))
+            except (TypeError, ValueError):
                 days = 90
-            depart = query.get("depart", [""])[0] or None
-            ret = query.get("return", [""])[0] or None
+            # dated values are never interpreted as SQL, but keep them short
+            depart = (query.get("depart", [""])[0] or "")[:10] or None
+            ret = (query.get("return", [""])[0] or "")[:10] or None
 
             conn = storage.connect(cfg.db_path)
             try:
@@ -142,12 +203,16 @@ def serve(cfg: Config) -> None:
         cfg.web_port,
         "on" if cfg.web_user else "off",
     )
+    if cfg.web_host not in ("127.0.0.1", "localhost", "::1") and not cfg.web_user:
+        log.warning(
+            "dashboard is reachable from the network without authentication - "
+            "set WEB_USER/WEB_PASS or keep WEB_HOST=127.0.0.1 and use an SSH tunnel"
+        )
     try:
-        httpd = ThreadingHTTPServer((cfg.web_host, cfg.web_port), make_handler(cfg))
+        httpd = BoundedThreadingHTTPServer((cfg.web_host, cfg.web_port), make_handler(cfg))
     except OSError as exc:
         log.error("dashboard could not start on %s:%d: %s", cfg.web_host, cfg.web_port, exc)
         return
-    httpd.daemon_threads = True
     try:
         httpd.serve_forever()
     except OSError as exc:
